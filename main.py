@@ -1,3 +1,4 @@
+import aiogram
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -5,6 +6,10 @@ from aiogram import executor
 from app import sql
 import config
 
+import asyncio
+loop = asyncio.get_event_loop()
+import logging
+logging.basicConfig(level=logging.INFO)
 
 
 bot = Bot(token=config.BOT_TOKEN)
@@ -60,7 +65,7 @@ async def send_start(message: types.Message):
                 
         # Проверяем, является ли пользователь администратором
         if user_id == config.ADMIN_USER:
-            send_media_button = types.InlineKeyboardButton("🤘Админ меню🫰", callback_data="admin_panel")
+            send_media_button = types.InlineKeyboardButton("🤘Админ меню", callback_data="admin_panel")
             keyboard.add(send_media_button)
         
         await message.answer(text_user, reply_markup=keyboard, parse_mode="HTML")
@@ -98,9 +103,11 @@ def main_menu(tg_id):
     
     
 def new_ticket(tg_id):
-    text = f"<b>📤 Новая заявка</b>\n\n" \
-           f"Пример оформления заявки: \n<i>Не работает принтер на 4 ПК, необходимо проверить подключение</i>" 
-           
+    text = (f"<b>📤 Создание новой заявки</b>\n\n" 
+            f" - 📝 Опишите вашу проблему.\n"
+            f" - 🧩 Пожалуйста, опишите вашу проблему и укажите как можно больше деталей.\n\n"
+            f"<b>Пример оформления заявки:</b> \n<i>Не работает принтер на 4 ПК, необходимо проверить подключение.</i>")
+
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu"))
     return text, keyboard 
@@ -122,7 +129,7 @@ def my_ticket(tg_id):
                      )     
         for ticket in user_tickets_in_progress:
             # Использование индексов для доступа к данным кортежа           
-            text += (f"<b>Номер заявки:</b> {ticket[0]}\n"
+            text += (f"<b>Номер заявки:</b> <code>#{ticket[0]} </code>\n"
                      f"<b>Описание:</b> {ticket[4]}\n"
                      f"<b>Дата: </b>{ticket[5]}\n\n"
                     #f"<b>Статус:</b> {ticket[6]}\n\n"
@@ -143,7 +150,7 @@ def my_company(tg_id):
     organization_phone = profile.get("organization_phone", "Нет данных")
     
     # Формирование текста для отображения данных о компании
-    text = (f"<b>🏢 Моя компания</b>\n\n" 
+    text = (f"<b>🏢 Информация о компании</b>\n\n" 
            f"<b>📋 Компания:</b> {organization}\n" 
            f"<b>📍 Адрес:</b> {organization_address}\n" 
            f"<b>📑 ИНН:</b> {organization_inn}\n" 
@@ -190,16 +197,18 @@ def done_ticket(tg_id):
     keyboard.add(InlineKeyboardButton(text="⬅️  В меню", parse_mode="HTML", callback_data="main_menu"))
     return text, keyboard
 
-
+# Административный раздел
 def admin_panel():
     total_open_tickets = sql.get_total_tickets_by_status_admin("В работе")  # Получаем общее количество заявок "В работе"
     total_closed_tickets = sql.get_total_tickets_by_status_admin("Завершена")  # Получаем общее количество завершенных заявок
 
-    text = f"<b>🤘Админ меню🫰</b>\n\n"
+    text = f"<b>🤘Админ меню</b>\n\n"
     text += f"<b>🔥Заявок в работе:</b> {total_open_tickets}\n"
-    text += f"<b>👍Завершенных заявок:</b> {total_closed_tickets}\n"
+    text += f"<b>👍Завершенных заявок:</b> {total_closed_tickets}\n\n"
+    text += f"<b>⚠️ Внимание!</b> <i>Закрытые задачи не могут быть возвращены в работу. Пожалуйста, будьте внимательны при их закрытии!</i>"
+    
     keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton(text="💪 Отобразить все задачи", callback_data="show_all_tickets_in_progress"))
+    keyboard.add(InlineKeyboardButton(text="📋 Список задач в работе", callback_data="show_all_tickets_in_progress"))
     keyboard.add(InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu"))
     return text, keyboard
     
@@ -207,11 +216,11 @@ def admin_panel():
 def show_all_tickets_in_progress():
     all_tickets_in_progress = sql.get_all_tickets_in_progress()
     keyboard = InlineKeyboardMarkup()
-    text = f"💪 Список заявок в работе:"
+    text = f"<b>💪 Список заявок в работе: </b>\n\n <b>⚠️ Внимание!</b> <i>Закрытые задачи не могут быть возвращены в работу. Пожалуйста, будьте внимательны при их закрытии!</i>"
     for ticket in all_tickets_in_progress:
-        ticket_info = f"Заявка #{ticket[0]} - {ticket[5]}"  # Номер и описание заявки
+        ticket_info = f"Заявка #{ticket[0]} - {ticket[5]}" # Номер и описание заявки
         keyboard.add(InlineKeyboardButton(text=ticket_info, callback_data=f"ticket_{ticket[0]}"))
-    keyboard.add(InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu"))
+    keyboard.add(InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel"))
     return text, keyboard
 
 
@@ -219,6 +228,7 @@ def show_all_tickets_in_progress():
 async def show_ticket_info(query: types.CallbackQuery):
     ticket_id = query.data.split('_')[1]
     ticket_info = sql.get_ticket_info(ticket_id)
+    
     text = f"<b>Детали заявки:</b> <code>#{ticket_info[0]}\n\n</code>" \
            f"<b>Пользователь ID:</b> <a href='tg://user?id={ticket_info[1]}'>{ticket_info[1]}</a>\n" \
            f"<b>Организация:</b> {ticket_info[2]}\n" \
@@ -228,10 +238,9 @@ async def show_ticket_info(query: types.CallbackQuery):
            f"<b>Статус:</b> {ticket_info[6]}\n"
 
     keyboard = types.InlineKeyboardMarkup()
-    complete_button = types.InlineKeyboardButton("Выполнить", callback_data=f"complete_{ticket_info[0]}")
-    back_button = types.InlineKeyboardButton("Назад", callback_data="admin_panel")
+    complete_button = types.InlineKeyboardButton("✅ Выполнить", callback_data=f"complete_{ticket_info[0]}")
+    back_button = types.InlineKeyboardButton("⬅️ Назад", callback_data="show_all_tickets_in_progress")
     keyboard.add(complete_button, back_button)
-
     await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
 
 
@@ -259,7 +268,14 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery):
         # Обновление ячейки 'pos' в базе данных
         sql.update_pos('complete_', 'tg_id', user_id)
         sql.update_ticket_status(ticket_id, "Завершена")
-        await bot.send_message(query.from_user.id, f"Задача <code>#{ticket_id}</code> выполнена!", parse_mode="HTML")        
+        
+        # Отправка сообщения пользователю о завершении задачи
+        ticket_info = sql.get_ticket_info(ticket_id)
+        user_id = ticket_info[1]  # ID пользователя, поставившего задачу
+        completion_message = f"🎉 Задача <code>#{ticket_id}</code> выполнена! \n\n⚠️ Пожалуйста, проверьте корректность исполнения задачи."
+        
+        await bot.send_message(user_id, completion_message, parse_mode="HTML")
+        await bot.send_message(query.from_user.id, completion_message, parse_mode="HTML")        
         
     if query.data == 'main_menu':
         # Обновление ячейки 'pos' в базе данных
@@ -373,7 +389,8 @@ async def handle_text_input(message: types.Message):
             await bot.send_message(config.ADMIN_USER, admin_text, parse_mode="HTML")
         else:
             await message.reply("Ошибка при получении заявки.")
-
+            
 
 if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
+    executor = aiogram.executor.Executor(dp, loop=loop, skip_updates=True)
+    executor.start_polling()
