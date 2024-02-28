@@ -19,7 +19,6 @@ dp.middleware.setup(LoggingMiddleware())
 sql.create_tables()
 
 
-
 @dp.message_handler(commands=['start'])
 async def send_start(message: types.Message):
     user_id = message.from_user.id
@@ -121,6 +120,7 @@ def my_ticket(tg_id):
     organization = profile.get("organization")
     organization_address = profile.get("organization_adress")
     
+    
     if user_tickets_in_progress:
         text = (f"<b>📥 Мои заявки </b>\n\n"
                      f"<b>Компания:</b> {organization}\n"
@@ -194,8 +194,9 @@ def done_ticket(tg_id):
     last_ticket_number = sql.get_last_ticket_number()   
     text = f'🎉🥳 Успех, ваша заявка зарегестрирована! \nНомер заявки <code>{last_ticket_number}</code>. \n\n<i>PS: Отслеживайте статус поставленных задач в разделе</i> <b>"📥 Мои заявки"</b>'
     keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton(text="⬅️  В меню", parse_mode="HTML", callback_data="main_menu"))
+    keyboard.add(InlineKeyboardButton(text="🧑‍💻 Главное меню", parse_mode="HTML", callback_data="main_menu"))
     return text, keyboard
+
 
 # Административный раздел
 def admin_panel():
@@ -244,7 +245,6 @@ async def show_ticket_info(query: types.CallbackQuery):
     await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
 
 
-
 # Группа колбеков на батоны
 @dp.callback_query_handler()
 async def inline_kb_answer_callback_handler(query: types.CallbackQuery):
@@ -274,8 +274,14 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery):
         user_id = ticket_info[1]  # ID пользователя, поставившего задачу
         completion_message = f"🎉 Задача <code>#{ticket_id}</code> выполнена! \n\n⚠️ Пожалуйста, проверьте корректность исполнения задачи."
         
-        await bot.send_message(user_id, completion_message, parse_mode="HTML")
-        await bot.send_message(query.from_user.id, completion_message, parse_mode="HTML")        
+        back_button_user = types.InlineKeyboardButton("🧑‍💻 Главное меню", callback_data="main_menu")
+        keyboard_markup_user = types.InlineKeyboardMarkup().add(back_button_user)
+        
+        back_button_admin = types.InlineKeyboardButton("🤘Админ меню", callback_data="admin_panel")
+        keyboard_markup_admin = types.InlineKeyboardMarkup().add(back_button_admin)
+        
+        await bot.send_message(user_id, completion_message, reply_markup=keyboard_markup_user, parse_mode="HTML")
+        await bot.send_message(query.from_user.id, completion_message, reply_markup=keyboard_markup_admin, parse_mode="HTML")  
         
     if query.data == 'main_menu':
         # Обновление ячейки 'pos' в базе данных
@@ -329,6 +335,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery):
 # Обратотка текстовых сообщений
 @dp.message_handler()
 async def handle_text_input(message: types.Message):
+    
     user_id = message.from_user.id
     username = message.from_user.username
     profile = sql.read_profile(user_id)  
@@ -379,14 +386,22 @@ async def handle_text_input(message: types.Message):
             text, keyboard = done_ticket(user_id)
             await message.reply(text, reply_markup=keyboard, parse_mode="HTML")
             
+            # Создаем кнопку "✅ Выполнить"
+            complete_button = types.InlineKeyboardButton("✅ Выполнить", callback_data=f"complete_{last_ticket_number}")
+            backbutton = types.InlineKeyboardButton("⬅️ Назад", callback_data="show_all_tickets_in_progress")
+            # Создаем клавиатуру с этой кнопкой
+            keyboard_markup = types.InlineKeyboardMarkup().add(complete_button, backbutton)
+            
             # Отправка сообщения администратору
             admin_text = (f"📬❗️Пользователь @{username} создал новую заявку с номером <code>{last_ticket_number}</code>."
-                          f"\n\n<b>Сообщение от пользователя:</b>\n - {message_ticket}"
-                          f"\n\n<b>Телефон:</b> {organization_phone}\n"
-                          f"<b>Компания:</b> {organization}\n"
-                          f"<b>Адрес:</b> {addres_ticket}\n"
+                        f"\n\n<b>Сообщение от пользователя:</b>\n - {message_ticket}"
+                        f"\n\n<b>Телефон:</b> {organization_phone}\n"
+                        f"<b>Компания:</b> {organization}\n"
+                        f"<b>Адрес:</b> {addres_ticket}\n"
             )
-            await bot.send_message(config.ADMIN_USER, admin_text, parse_mode="HTML")
+            
+            # Добавляем клавиатуру к уведомлению
+            await bot.send_message(config.ADMIN_USER, admin_text, parse_mode="HTML", reply_markup=keyboard_markup)
         else:
             await message.reply("Ошибка при получении заявки.")
             

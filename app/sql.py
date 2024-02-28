@@ -75,13 +75,11 @@ def get_total_tickets_by_status(tg_id, status):
     result = execute_query(query, (tg_id, status))
     return result[0][0] if result else 0
 
-
 # Функция возвращает статус задач для администаротора
 def get_total_tickets_by_status_admin(status):
     query = 'SELECT COUNT(*) FROM ticket WHERE state_ticket=?'
     result = execute_query(query, (status,))
     return result[0][0] if result else 0
-
 
 # Функция для получения данных заявки по номеру заявки из таблицы ticket
 def get_total_tickets_by_status_for_user(tg_id, status):
@@ -123,9 +121,7 @@ def read_profile(tg_id):
         return json.loads(result[0][0])
     return None
 
-
-
-
+# Функция возвращает данные о заявках в работе
 def get_all_tickets_in_progress():
     conn = sqlite3.connect('app/database.db')
     cursor = conn.cursor()
@@ -135,8 +131,7 @@ def get_all_tickets_in_progress():
 
     return all_tickets_in_progress
 
-
-
+# Функция возвращает список тикетов с _
 def get_ticket_info(ticket_id):
     conn = sqlite3.connect('app/database.db')
     cursor = conn.cursor()
@@ -145,6 +140,7 @@ def get_ticket_info(ticket_id):
     conn.close()
     return ticket_info
 
+# Обновляет статус тикета
 def update_ticket_status(ticket_id, new_status):
     conn = sqlite3.connect('app/database.db')
     cursor = conn.cursor()
