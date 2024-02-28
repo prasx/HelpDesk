@@ -147,3 +147,12 @@ def update_ticket_status(ticket_id, new_status):
     query = "UPDATE ticket SET state_ticket=? WHERE number_ticket=?"
     cursor.execute(query, (new_status, ticket_id))
     conn.commit()
+
+# Получает данные по юзеру и статусу заявок 
+def get_completed_tickets_by_user(tg_id):
+    conn = sqlite3.connect('app/database.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM ticket WHERE user_ticket=? AND state_ticket=?', (tg_id, "Завершена"))
+    completed_tickets = cursor.fetchall()
+    conn.close()
+    return completed_tickets
