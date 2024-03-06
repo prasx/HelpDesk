@@ -12,9 +12,6 @@
 
 ![История заявок](https://github.com/prasx/HelpDesk/assets/33151983/9111ab96-6199-4d89-a79b-8e700907aa5a)![Исполнение заявок](https://github.com/prasx/HelpDesk/assets/33151983/80c75a73-d3d0-48f4-9fe3-f0c325855b04)
 
-![История заявок](https://github.com/prasx/HelpDesk/assets/33151983/9111ab96-6199-4d89-a79b-8e700907aa5a)![Исполнение заявок](https://github.com/prasx/HelpDesk/assets/33151983/80c75a73-d3d0-48f4-9fe3-f0c325855b04)
-
-
 
 ## Описание
 Этот проект представляет собой Telegram бота, который предоставляет функционал HelpDesk системы. В текущей версии реализованы следующие функции:
