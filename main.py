@@ -66,8 +66,8 @@ async def send_start(message: types.Message):
                 
         # Проверяем, является ли пользователь администратором
         if user_id in ADMIN_USERS:
-            send_media_button = types.InlineKeyboardButton("🤘Админ меню", callback_data="admin_panel")
-            keyboard.add(send_media_button)
+            ticket_menu_admin = types.InlineKeyboardButton("🤘 Тикет меню", callback_data="admin_panel")
+            keyboard.add(ticket_menu_admin)
         await message.answer(text_user, reply_markup=keyboard, parse_mode="HTML")
        
     
@@ -96,8 +96,8 @@ def main_menu(tg_id):
     
     # Проверяем, является ли пользователь администратором
     if user_id in ADMIN_USERS:
-        send_media_button = types.InlineKeyboardButton("🤘Админ меню🫰", callback_data="admin_panel")
-        keyboard.add(send_media_button)
+        ticket_menu_admin = types.InlineKeyboardButton("🤘Тикет меню", callback_data="admin_panel")
+        keyboard.add(ticket_menu_admin)
     return text, keyboard
     
     
@@ -120,7 +120,7 @@ def my_ticket(tg_id):
     organization_address = profile.get("organization_adress")
     
     if user_tickets_in_progress:
-        text = (f"<b>📥 Мои заявки </b>\n\n"
+        text = (f"<b>📥 Мои заявки в работе</b>\n\n"
                      f"<b>Компания:</b> {organization}\n"
                      f"<b>Адрес заявки:</b> {organization_address}\n" 
                      f"<b>Заявок в работе:</b> {open_ticket}\n\n"
@@ -131,7 +131,6 @@ def my_ticket(tg_id):
                      f"<b>Описание:</b> {ticket[4]}\n"
                      f"<b>Дата: </b>{ticket[5]}\n"
                      f"<b>Статус:</b> {ticket[6]}\n"
-                     f"<b>Комментарий исполнителя:</b> {ticket[7]}\n\n"
                      )
     else:
         text = '<b>📥 Мои заявки </b>\n\nУ вас пока нет заявок в работе..  🤷‍♂️ \n- <i>Что бы оставить заявку воспользуйтесь меню </i><b>"📤 Новая заявка"</b>'
@@ -151,16 +150,18 @@ def my_ticket_history(tg_id, page=1, page_size=4):
             start_index = (page - 1) * page_size
             end_index = start_index + page_size
             current_page_tickets = completed_tickets[start_index:end_index]
-            text = f"<b>☑️ История ваших завершенных заявок (страница {page}):</b>\n\n"
+            text = f"<b>📨 История ваших завершенных заявок (страница {page}):</b>\n\n"
         else:
             current_page_tickets = completed_tickets
-            text = "<b>☑️ История ваших завершенных заявок:</b>\n\n"
+            text = "<b>📨 История ваших завершенных заявок:</b>\n\n"
         
         for ticket in current_page_tickets:
-            text += f"<b>Номер заявки:</b> <code>#{ticket[0]}</code>\n" \
-                    f"<b>Сообщение:</b> {ticket[4]}\n" \
-                    f"<b>Время создания:</b> {ticket[5]}\n" \
-                    f"<b>Статус:</b> {ticket[6]}\n\n" 
+            text += f"✅\n" \
+                    f"<b>├ Номер заявки:</b> <code>#{ticket[0]}</code>\n" \
+                    f"<b>├ Время создания:</b> {ticket[5]}\n" \
+                    f"<b>├ Сообщение:</b> - <em>{ticket[4]}</em>\n" \
+                    f"<b>└ Комментарий исполнителя:</b>  - <em>{ticket[7]}</em>\n\n"
+                    
     else:
         text = "🤷‍♂️ Упс.. У вас нет истории заявок."
         
@@ -225,7 +226,7 @@ def edit_company_phone(tg_id):
       
 def done_ticket(tg_id):
     last_ticket_number = sql.get_last_ticket_number()   
-    text = f'🎉🥳 Успех, ваша заявка зарегестрирована! \nНомер заявки <code>#{last_ticket_number}</code>. \n\n<i>PS: Отслеживайте статус поставленных задач в разделе</i> <b>"📥 Мои заявки"</b>'
+    text = f'🎉🥳 Успех, ваша заявка зарегестрирована! \n\n<b>Номер заявки: </b><code>#{last_ticket_number}</code>. \n\n<i>PS: Отслеживайте статус поставленных задач в разделе</i> <b>"📥 Мои заявки"</b>'
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton(text="🧑‍💻 Главное меню", parse_mode="HTML", callback_data="main_menu"))
     return text, keyboard
@@ -237,7 +238,7 @@ def admin_panel():
     total_closed_tickets = sql.get_total_tickets_by_status_admin("Завершена")  # Получаем общее количество завершенных заявок
     all_tickets_in_progress = sql.get_all_tickets_in_progress()
     
-    text = f"<b>🤘Админ меню</b>\n\n"
+    text = f"<b>🤘 Тикет меню 💲</b>\n\n"
     text += f"<b>🔥Заявок в работе:</b> {total_open_tickets}\n"
     text += f"<b>👍Завершенных заявок:</b> {total_closed_tickets}\n\n"
     text += f"<b>⚠️ Внимание!</b> <i>Закрытые задачи не могут быть возвращены в работу. Пожалуйста, будьте внимательны при их закрытии!</i>"
@@ -265,8 +266,8 @@ async def handle_ticket_callback(query: types.CallbackQuery):
         text = f"<b>Детали заявки:</b> <code>#{ticket_info[0]}\n\n</code>" \
                f"<b>Пользователь ID:</b> <a href='tg://user?id={ticket_info[1]}'>{ticket_info[1]}</a>\n" \
                f"<b>Организация:</b> {ticket_info[2]}\n" \
-               f"<b>Адрес:</b> {ticket_info[3]}\n" \
-               f"<b>Сообщение:</b> {ticket_info[4]}\n" \
+               f"<b>Адрес:</b> {ticket_info[3]}\n\n" \
+               f"<b>Сообщение от пользователя:</b> - <em>{ticket_info[4]}</em>\n\n" \
                f"<b>Время создания:</b> {ticket_info[5]}\n" \
                f"<b>Статус:</b> {ticket_info[6]}\n\n" \
                f"<em>⚠️ Для завершения задачи введите комментарий. В ответ вам придет сообщение с подтвержением!</em>"
@@ -328,12 +329,13 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery):
 
         # Отправка сообщения пользователю о завершении задачи
         user_id = ticket_info[1]  # ID пользователя, поставившего задачу
-        completion_message = f"🎉 Задача <code>#{ticket_id}</code> выполнена!\n<b>Время исполнения задачи:</b> {hours} часа(ов).\n\n<b>Текст ответа на тикет:</b> {ticket_comm_done}\n\n<em>⚠️ Пожалуйста, проверьте корректность исполнения задачи.</em>"
+        completion_message = f"🎉 Задача <code>#{ticket_id}</code> выполнена!\n<b>Время выполнения:</b> {hours} часа(ов).\n\n<b>Ответ исполнителя:</b> - <em>{ticket_comm_done}</em>\n\n<em>⚠️ Пожалуйста, проверьте корректность исполнения задачи.</em>"
         
         back_button_user = types.InlineKeyboardButton("🧑‍💻 Главное меню", callback_data="main_menu")
-        keyboard_markup_user = types.InlineKeyboardMarkup().add(back_button_user)
+        history_ticket = InlineKeyboardButton(text="☑️ История заявок", callback_data="my_ticket_history")
+        keyboard_markup_user = types.InlineKeyboardMarkup().add(history_ticket, back_button_user)
         
-        back_button_admin = types.InlineKeyboardButton("🤘Админ меню", callback_data="admin_panel")
+        back_button_admin = types.InlineKeyboardButton("🤘Тикет меню", callback_data="admin_panel")
         keyboard_markup_admin = types.InlineKeyboardMarkup().add(back_button_admin)
         
         await bot.send_message(user_id, completion_message, reply_markup=keyboard_markup_user, parse_mode="HTML")
@@ -425,7 +427,7 @@ async def handle_text_input(message: types.Message):
             keyboard.add(complete_button)
             
             # Вставляем переменные в текст сообщения
-            success_message = f"<b>Комментарий к тикету <code>#{ticket_id}</code> успешно записан!</b>\n\n<b>Текст ответа на тикет:</b> {comment_text}\n\n<em>⚠️ Если вы допустили ошибку, просто отправьте исправленное сообщение еще раз.</em>"
+            success_message = f"<b>Комментарий к тикету <code>#{ticket_id}</code> успешно записан!</b>\n\n<b>Ответ исполнителя:</b> - <em>{comment_text}</em>\n\n<em>⚠️ Если вы допустили ошибку, просто отправьте исправленное сообщение еще раз.</em>"
             await message.reply(success_message, reply_markup=keyboard, parse_mode="HTML")
         else:
             await message.reply("Ошибка формата номера тикета", parse_mode="HTML")
@@ -476,12 +478,12 @@ async def handle_text_input(message: types.Message):
             text, keyboard = done_ticket(user_id)
             await message.reply(text, reply_markup=keyboard, parse_mode="HTML")
             
-            admin_panel = types.InlineKeyboardButton("🤘Админ меню🫰", callback_data="admin_panel")
+            admin_panel = types.InlineKeyboardButton("🤘Тикет меню🫰", callback_data="admin_panel")
             keyboard_markup = types.InlineKeyboardMarkup().add(admin_panel)
             
             # Отправка сообщения администратору
             admin_text = (f"📬❗️\nПользователь @{username} создал новую заявку с номером <code>#{last_ticket_number}</code>."
-                        f"\n\n<b>Сообщение от пользователя:</b>\n - {message_ticket}"
+                        f"\n\n<b>Сообщение от пользователя:</b>\n - <em>{message_ticket}</em>"
                         f"\n\n<b>Телефон:</b> {organization_phone}\n"
                         f"<b>Компания:</b> {organization}\n"
                         f"<b>Адрес:</b> {addres_ticket}\n"
