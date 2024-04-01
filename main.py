@@ -226,7 +226,7 @@ def edit_company_phone(tg_id):
       
 def done_ticket(tg_id):
     last_ticket_number = sql.get_last_ticket_number()   
-    text = f'🎉🥳 Успех, ваша заявка зарегестрирована! \n\n<b>Номер заявки: </b><code>#{last_ticket_number}</code>. \n\n<i>PS: Отслеживайте статус поставленных задач в разделе</i> <b>"📥 Мои заявки"</b>'
+    text = f'🎉🥳 Успех, ваша заявка зарегистрирована! \n\n<b>Номер заявки: </b><code>#{last_ticket_number}</code>. \n\n<i>PS: Отслеживайте статус поставленных задач в разделе</i> <b>"📥 Мои заявки"</b>'
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton(text="🧑‍💻 Главное меню", parse_mode="HTML", callback_data="main_menu"))
     return text, keyboard
