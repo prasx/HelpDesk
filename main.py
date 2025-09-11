@@ -1,151 +1,167 @@
-import aiogram
-from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.middlewares.logging import LoggingMiddleware
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram import executor
+import asyncio
+import logging
+import datetime
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
 from app import sql
 import config
-from config import ADMIN_USERS, ADMIN_MESSAGE
-import datetime
 
-import asyncio
-loop = asyncio.get_event_loop()
-import logging
+# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
-
+# Создание бота и диспетчера
 bot = Bot(token=config.BOT_TOKEN)
-dp = Dispatcher(bot)
-dp.middleware.setup(LoggingMiddleware())
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
+
 # Создание таблиц в базе данных SQLite
 sql.create_tables()
 
+# Состояния для FSM
+class UserStates(StatesGroup):
+    waiting_for_company_name = State()
+    waiting_for_company_address = State()
+    waiting_for_company_inn = State()
+    waiting_for_company_phone = State()
+    waiting_for_ticket_message = State()
+    waiting_for_ticket_comment = State()
 
-@dp.message_handler(commands=['start'])
-async def send_start(message: types.Message):
+@dp.message(Command("start"))
+async def send_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
-    data_reg = message.date
+    moscow_dt = sql.parse_to_moscow_naive(message.date)
+    data_reg = moscow_dt.strftime("%Y-%m-%d %H:%M:%S")
     user = sql.get_user_by_id(user_id)
     
     if not user:
-        # Если пользователь отсутствует, добавляем его
         user_info = {
             'tg_id': user_id,
-            'pos': 'main_menu',
-            'data_reg': data_reg, 
-            'profile': {"organization": "Нет данных", "organization_adress": "Нет данных", "organization_inn": "Нет данных", "organization_phone": "Нет данных", "history_ticket": "", "data_ticket": "", "user_name": ""}
+            'data_reg': data_reg,
+            'organization': "Нет данных",
+            'organization_adress': "Нет данных",
+            'organization_inn': "Нет данных",
+            'organization_phone': "Нет данных",
+            'history_ticket': "",
+            'data_ticket': "",
+            'user_name': ""
         }
         sql.add_user(**user_info)
-        text_no_user = f"Добро пожаловать в HelpDesk компании <b>ЭниКей</b>! Для работы в сервисе необходимо заполнить данные."
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton(text="🏢 Моя компания", callback_data="my_company"))
+        text_no_user = "Добро пожаловать в HelpDesk компании <b>ЭниКей</b>! Для работы в сервисе необходимо заполнить данные."
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🏢 Моя компания", callback_data="my_company")]
+        ])
         await message.answer(text_no_user, reply_markup=keyboard, parse_mode="HTML")
-        
+        await state.set_state(None)
     else:
-        # Проверка открытых\закрытых тикетов 
-        open_ticket = sql.get_total_tickets_by_status_for_user(user_id, "В работе")
-        closed_ticket = sql.get_total_tickets_by_status_for_user(user_id, "Завершена")
-        # Чтение профиля
-        profile = sql.read_profile(user_id)
-        sql.update_pos('main_menu', 'tg_id', user_id)
-        organization = profile.get("organization", "Нет данных")
-        organization_phone = profile.get("organization_phone", "Нет данных")
+        open_ticket = sql.get_ticket_count(user_id, "В работе")
+        closed_ticket = sql.get_ticket_count(user_id, "Завершена")
+        organization = user.get("organization", "Нет данных")
+        organization_phone = user.get("organization_phone", "Нет данных")
         
-        text_user =  (f"<b>🧑‍💻 Главное меню</b> \n\n" 
-                f"<b>📋 Компания: </b> {organization}\n"
-                f"<b>☎️ Контактный номер:</b> {organization_phone}\n\n"
-                
-                f"<b>📬Открытых заявок:</b> {open_ticket}\n" 
-                f"<b>📭Закрытых заявок:</b> {closed_ticket}\n" 
-                f"\nВыберите интересующее действие ⬇️"
-        )
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton(text="🏢 Моя компания", callback_data="my_company"),
-                    InlineKeyboardButton(text="📥 Мои заявки", callback_data="my_ticket"))
-        keyboard.add(InlineKeyboardButton(text="📤 Новая заявка", callback_data="new_ticket"))
-                
-        # Проверяем, является ли пользователь администратором
-        if user_id in ADMIN_USERS:
-            ticket_menu_admin = types.InlineKeyboardButton("🤘 Тикет меню", callback_data="admin_panel")
-            keyboard.add(ticket_menu_admin)
-        await message.answer(text_user, reply_markup=keyboard, parse_mode="HTML")
-       
-    
-# Главное меню пользователя мимикрия под /start
-def main_menu(tg_id):
-    sql.update_pos('main_menu', 'tg_id', tg_id)
-    user_id = tg_id
-    open_ticket = sql.get_total_tickets_by_status_for_user(tg_id, "В работе")
-    closed_ticket = sql.get_total_tickets_by_status_for_user(tg_id, "Завершена")
-    profile = sql.read_profile(tg_id)
-    organization = profile.get("organization", "Нет данных")
-    organization_phone = profile.get("organization_phone", "Нет данных")
-    
-    text =  (f"<b>🧑‍💻 Главное меню</b> \n\n" 
-            f"<b>📋 Компания: </b> {organization}\n"
+        text_user = (
+            f"<b>🧑‍💻 Главное меню</b>\n\n"
+            f"<b>📋 Компания:</b> {organization}\n"
             f"<b>☎️ Контактный номер:</b> {organization_phone}\n\n"
-            
-            f"<b>📬Открытых заявок:</b> {open_ticket}\n" 
-            f"<b>📭Закрытых заявок:</b> {closed_ticket}\n" 
+            f"<b>📬 Открытых заявок:</b> {open_ticket}\n"
+            f"<b>📭 Закрытых заявок:</b> {closed_ticket}\n"
             f"\nВыберите интересующее действие ⬇️"
-    )
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton(text="🏢 Моя компания", callback_data="my_company"),
-                 InlineKeyboardButton(text="📥 Мои заявки", callback_data="my_ticket"))
-    keyboard.add(InlineKeyboardButton(text="📤 Новая заявка", callback_data="new_ticket"))
-    
-    # Проверяем, является ли пользователь администратором
-    if user_id in ADMIN_USERS:
-        ticket_menu_admin = types.InlineKeyboardButton("🤘Тикет меню", callback_data="admin_panel")
-        keyboard.add(ticket_menu_admin)
-    return text, keyboard
-    
-    
-def new_ticket(tg_id):
-    text = (f"<b>📤 Создание новой заявки</b>\n\n" 
-            # f" - 📝 Опишите вашу проблему.\n"
-            f" - 🧩 Пожалуйста, опишите вашу проблему и укажите как можно подробнее.\n\n"
-            f"<b>Пример оформления заявки:</b> \n<i>Не работает принтер на 4 ПК, необходимо проверить подключение.</i>")
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu"))
-    return text, keyboard 
+        )
+        
+        keyboard_buttons = [
+            [InlineKeyboardButton(text="🏢 Моя компания", callback_data="my_company"),
+             InlineKeyboardButton(text="📥 Мои заявки", callback_data="my_ticket")],
+            [InlineKeyboardButton(text="📤 Новая заявка", callback_data="new_ticket")]
+        ]
+        
+        if user_id in config.ADMIN_USERS:
+            keyboard_buttons.append([InlineKeyboardButton(text="🤘 Тикет меню", callback_data="admin_panel")])
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+        await message.answer(text_user, reply_markup=keyboard, parse_mode="HTML")
+        await state.set_state(None)
 
+def main_menu(tg_id):
+    open_ticket = sql.get_ticket_count(tg_id, "В работе")
+    closed_ticket = sql.get_ticket_count(tg_id, "Завершена")
+    user = sql.get_user_by_id(tg_id)
+    organization = user.get("organization", "Нет данных")
+    organization_phone = user.get("organization_phone", "Нет данных")
+    
+    text = (
+        f"<b>🧑‍💻 Главное меню</b>\n\n"
+        f"<b>📋 Компания:</b> {organization}\n"
+        f"<b>☎️ Контактный номер:</b> {organization_phone}\n\n"
+        f"<b>📬 Открытых заявок:</b> {open_ticket}\n"
+        f"<b>📭 Закрытых заявок:</b> {closed_ticket}\n"
+        f"\nВыберите интересующее действие ⬇️"
+    )
+    
+    keyboard_buttons = [
+        [InlineKeyboardButton(text="🏢 Моя компания", callback_data="my_company"),
+         InlineKeyboardButton(text="📥 Мои заявки", callback_data="my_ticket")],
+        [InlineKeyboardButton(text="📤 Новая заявка", callback_data="new_ticket")]
+    ]
+    
+    if tg_id in config.ADMIN_USERS:
+        keyboard_buttons.append([InlineKeyboardButton(text="🤘 Тикет меню", callback_data="admin_panel")])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    return text, keyboard
+
+def new_ticket(tg_id):
+    text = (
+        f"<b>📤 Создание новой заявки</b>\n\n"
+        f" - 📝 Опишите вашу проблему.\n"
+        f" - 🧩 Пожалуйста, опишите вашу проблему и укажите как можно больше деталей.\n\n"
+        f"<b>Пример оформления заявки:</b>\n<i>Не работает принтер на 4 ПК, необходимо проверить подключение.</i>"
+    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")]
+    ])
+    return text, keyboard
 
 def my_ticket(tg_id):
-    profile = sql.read_profile(tg_id)
+    user = sql.get_user_by_id(tg_id)
     user_tickets_in_progress = sql.get_tickets_in_progress_by_user_id(tg_id)
     total_user_tickets_in_progress = len(user_tickets_in_progress)
     open_ticket = str(total_user_tickets_in_progress) if total_user_tickets_in_progress else "0"
-    organization = profile.get("organization")
-    organization_address = profile.get("organization_adress")
+    organization = user.get("organization", "Нет данных")
+    organization_address = user.get("organization_adress", "Нет данных")
     
     if user_tickets_in_progress:
-        text = (f"<b>📥 Мои заявки в работе</b>\n\n"
-                     f"<b>Компания:</b> {organization}\n"
-                     f"<b>Адрес заявки:</b> {organization_address}\n" 
-                     f"<b>Заявок в работе:</b> {open_ticket}\n\n"
-                     )     
+        text = (
+            f"<b>📥 Мои заявки в работе</b>\n\n"
+            f"<b>Компания:</b> {organization}\n"
+            f"<b>Адрес заявки:</b> {organization_address}\n"
+            f"<b>Заявок в работе:</b> {open_ticket}\n\n"
+        )
         for ticket in user_tickets_in_progress:
-            # Использование индексов для доступа к данным кортежа           
-            text += (f"<b>Номер заявки:</b> <code>#{ticket[0]} </code>\n"
-                     f"<b>Описание:</b> {ticket[4]}\n"
-                     f"<b>Дата: </b>{ticket[5]}\n"
-                     f"<b>Статус:</b> {ticket[6]}\n"
-                     )
+            text += (
+                f"<b>Номер заявки:</b> <code>#{ticket[0]}</code>\n"
+                f"<b>Описание:</b> {ticket[4]}\n"
+                f"<b>Дата:</b> {ticket[5]}\n"
+                f"<b>Статус:</b> {ticket[6]}\n"
+            )
     else:
-        text = '<b>📥 Мои заявки </b>\n\nУ вас пока нет заявок в работе..  🤷‍♂️ \n- <i>Что бы оставить заявку воспользуйтесь меню </i><b>"📤 Новая заявка"</b>'
+        text = (
+            '<b>📥 Мои заявки</b>\n\n'
+            'У вас пока нет заявок в работе.. 🤷‍♂️\n'
+            '- <i>Чтобы оставить заявку, воспользуйтесь меню </i><b>"📤 Новая заявка"</b>'
+        )
 
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton(text="☑️ История заявок", callback_data="my_ticket_history"))
-    keyboard.add(InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu"))
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="☑️ История заявок", callback_data="my_ticket_history")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")]
+    ])
     return text, keyboard
-
 
 def my_ticket_history(tg_id, page=1, page_size=4):
     completed_tickets = sql.get_completed_tickets_by_user(tg_id)
-    # Проверяем, есть ли завершенные заявки
     if completed_tickets:
-        # Проверяем, нужна ли пагинация
         if len(completed_tickets) > page_size:
             start_index = (page - 1) * page_size
             end_index = start_index + page_size
@@ -156,345 +172,337 @@ def my_ticket_history(tg_id, page=1, page_size=4):
             text = "<b>📨 История ваших завершенных заявок:</b>\n\n"
         
         for ticket in current_page_tickets:
-            text += f"✅\n" \
-                    f"<b>├ Номер заявки:</b> <code>#{ticket[0]}</code>\n" \
-                    f"<b>├ Время создания:</b> {ticket[5]}\n" \
-                    f"<b>├ Сообщение:</b> - <em>{ticket[4]}</em>\n" \
-                    f"<b>└ Комментарий исполнителя:</b>  - <em>{ticket[7]}</em>\n\n"
-                    
+            text += (
+                f"✅\n"
+                f"<b>├ Номер заявки:</b> <code>#{ticket[0]}</code>\n"
+                f"<b>├ Время создания:</b> {ticket[5]}\n"
+                f"<b>├ Сообщение:</b> - <em>{ticket[4]}</em>\n"
+                f"<b>└ Комментарий исполнителя:</b> - <em>{ticket[7]}</em>\n\n"
+            )
     else:
         text = "🤷‍♂️ Упс.. У вас нет истории заявок."
         
-    keyboard = InlineKeyboardMarkup()
-    # Создаем кнопки для навигации по страницам, если нужно
+    keyboard_buttons = []
     if len(completed_tickets) > page_size:
+        nav_buttons = []
         if page > 1:
-            keyboard.row(InlineKeyboardButton(text="🔙 Предыдущая", callback_data=f"my_ticket_page_{page - 1}"))
+            nav_buttons.append(InlineKeyboardButton(text="🔙 Предыдущая", callback_data=f"my_ticket_page_{page - 1}"))
         if end_index < len(completed_tickets):
-            keyboard.insert(InlineKeyboardButton(text="🔜 Следующая", callback_data=f"my_ticket_page_{page + 1}"))
-    keyboard.add(InlineKeyboardButton(text="⬅️ Назад", callback_data="my_ticket"))
+            nav_buttons.append(InlineKeyboardButton(text="🔜 Следующая", callback_data=f"my_ticket_page_{page + 1}"))
+        if nav_buttons:
+            keyboard_buttons.append(nav_buttons)
+    
+    keyboard_buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="my_ticket")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     return text, keyboard
-
 
 def my_company(tg_id):
-    profile = sql.read_profile(tg_id)
-    organization = profile.get("organization", "Нет данных")
-    organization_address = profile.get("organization_adress", "Нет данных")
-    organization_inn = profile.get("organization_inn", "Нет данных")
-    organization_phone = profile.get("organization_phone", "Нет данных")
+    user = sql.get_user_by_id(tg_id)
+    organization = user.get("organization", "Нет данных")
+    organization_address = user.get("organization_adress", "Нет данных")
+    organization_inn = user.get("organization_inn", "Нет данных")
+    organization_phone = user.get("organization_phone", "Нет данных")
     
-    # Формирование текста для отображения данных о компании
-    text = (f"<b>🏢 Информация о компании</b>\n\n" 
-           f"<b>📋 Компания:</b> {organization}\n" 
-           f"<b>📍 Адрес:</b> {organization_address}\n" 
-           f"<b>📑 ИНН:</b> {organization_inn}\n" 
-           f"<b>☎️ Контактный номер:</b> <i>{organization_phone}</i>\n\n" 
-           f"<b>ЗАПОЛНИТЬ ДАННЫЕ О КОМПАНИИ ⬇️ </b>" )  
+    text = (
+        f"<b>🏢 Информация о компании</b>\n\n"
+        f"<b>📋 Компания:</b> {organization}\n"
+        f"<b>📍 Адрес:</b> {organization_address}\n"
+        f"<b>📑 ИНН:</b> {organization_inn}\n"
+        f"<b>☎️ Контактный номер:</b> <i>{organization_phone}</i>\n\n"
+        f"<b>ЗАПОЛНИТЬ ДАННЫЕ О КОМПАНИИ ⬇️</b>"
+    )
     
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton(text=f"{'✅' if organization != 'Нет данных' else '❌'} Наименование компании", callback_data="edit_company_name"))
-    keyboard.add(InlineKeyboardButton(text=f"{'✅' if organization_address != 'Нет данных' else '❌'} Фактический адрес", callback_data="edit_company_adress"))
-    keyboard.add(InlineKeyboardButton(text=f"{'✅' if organization_inn != 'Нет данных' else '❌'} ИНН", callback_data="edit_company_inn"))
-    keyboard.add(InlineKeyboardButton(text=f"{'✅' if organization_phone != 'Нет данных' else '❌'} Контактный номер", callback_data="edit_company_phone"))
-    keyboard.add(InlineKeyboardButton(text="⬅️ В меню", callback_data="main_menu"))
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"{'✅' if organization != 'Нет данных' else '❌'} Наименование компании", callback_data="edit_company_name")],
+        [InlineKeyboardButton(text=f"{'✅' if organization_address != 'Нет данных' else '❌'} Фактический адрес", callback_data="edit_company_adress")],
+        [InlineKeyboardButton(text=f"{'✅' if organization_inn != 'Нет данных' else '❌'} ИНН", callback_data="edit_company_inn")],
+        [InlineKeyboardButton(text=f"{'✅' if organization_phone != 'Нет данных' else '❌'} Контактный номер", callback_data="edit_company_phone")],
+        [InlineKeyboardButton(text="⬅️ В меню", callback_data="main_menu")]
+    ])
     return text, keyboard
-
 
 def edit_company_name(tg_id):
-    text = f"📋 Введите наименование организации. \nПример: <code> ООО РОГА И КОПЫТА </code>"
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton(text="⬅️ Назад", callback_data="my_company"))
+    text = f"📋 Введите наименование организации.\nПример: <code>ООО РОГА И КОПЫТА</code>"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="my_company")]
+    ])
     return text, keyboard
 
-def edit_company_adress(tg_id):
-    text = f"📍Введите фактический адрес организации. \nПример: <code> г. Иваново, ул. Пушкина, д. 3 оф. 1 </code>"
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton(text="⬅️ Назад", callback_data="my_company"))
+def edit_company_address(tg_id):
+    text = f"📍 Введите фактический адрес организации.\nПример: <code>г. Иваново, ул. Варенцовой, д. 33 оф. 1</code>"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="my_company")]
+    ])
     return text, keyboard
-    
+
 def edit_company_inn(tg_id):
-    text = f"📑 Введите ИНН организации. \nПример: <code> 3700010101 </code>"
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton(text="⬅️ Назад", callback_data="my_company"))
+    text = f"📑 Введите ИНН организации.\nПример: <code>3700010101</code>"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="my_company")]
+    ])
     return text, keyboard
 
 def edit_company_phone(tg_id):
-    text = f"☎️ Введите контактный номер телефона. \nПример: <code> +79100009999 </code>"
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton(text="⬅️ Назад", callback_data="my_company"))
+    text = f"☎️ Введите контактный номер телефона.\nПример: <code>+79109998188</code>"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="my_company")]
+    ])
     return text, keyboard
-      
+
 def done_ticket(tg_id):
-    last_ticket_number = sql.get_last_ticket_number()   
-    text = f'🎉🥳 Успех, ваша заявка зарегистрирована! \n\n<b>Номер заявки: </b><code>#{last_ticket_number}</code>. \n\n<i>PS: Отслеживайте статус поставленных задач в разделе</i> <b>"📥 Мои заявки"</b>'
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton(text="🧑‍💻 Главное меню", parse_mode="HTML", callback_data="main_menu"))
+    last_ticket_number = sql.get_last_ticket_number()
+    text = (
+        f'🎉🥳 Успех, ваша заявка зарегистрирована!\n\n'
+        f'<b>Номер заявки:</b> <code>#{last_ticket_number}</code>.\n\n'
+        f'<i>PS: Отслеживайте статус поставленных задач в разделе</i> <b>"📥 Мои заявки"</b>'
+    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🧑‍💻 Главное меню", callback_data="main_menu")]
+    ])
     return text, keyboard
 
-
-# Административный раздел
 def admin_panel():
-    total_open_tickets = sql.get_total_tickets_by_status_admin("В работе")  # Получаем общее количество заявок "В работе"
-    total_closed_tickets = sql.get_total_tickets_by_status_admin("Завершена")  # Получаем общее количество завершенных заявок
+    total_open_tickets = sql.get_ticket_count(None, "В работе")
+    total_closed_tickets = sql.get_ticket_count(None, "Завершена")
     all_tickets_in_progress = sql.get_all_tickets_in_progress()
     
-    text = f"<b>🤘 Тикет меню 💲</b>\n\n"
-    text += f"<b>🔥Заявок в работе:</b> {total_open_tickets}\n"
-    text += f"<b>👍Завершенных заявок:</b> {total_closed_tickets}\n\n"
-    text += f"<b>⚠️ Внимание!</b> <i>Закрытые задачи не могут быть возвращены в работу. Пожалуйста, будьте внимательны при их закрытии!</i>"
+    text = (
+        f"<b>🤘 Тикет меню 💲</b>\n\n"
+        f"<b>🔥 Заявок в работе:</b> {total_open_tickets}\n"
+        f"<b>👍 Завершенных заявок:</b> {total_closed_tickets}\n\n"
+        f"<b>⚠️ Внимание!</b> <i>Закрытые задачи не могут быть возвращены в работу. Пожалуйста, будьте внимательны при их закрытии!</i>"
+    )
     
-    keyboard = InlineKeyboardMarkup()
+    keyboard_buttons = []
     for ticket in all_tickets_in_progress:
-        ticket_info = f"Заявка #{ticket[0]} - {ticket[5]}" # Номер и описание заявки
-        keyboard.add(InlineKeyboardButton(text=ticket_info, callback_data=f"ticket_{ticket[0]}"))
-    keyboard.add(InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu"))
+        ticket_info = f"Заявка #{ticket[0]} - {ticket[5]}"
+        keyboard_buttons.append([InlineKeyboardButton(text=ticket_info, callback_data=f"ticket_{ticket[0]}")])
+    keyboard_buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     return text, keyboard
 
-
-
-@dp.callback_query_handler(lambda query: query.data.startswith(('ticket_', 'my_ticket_page_')))
-async def handle_ticket_callback(query: types.CallbackQuery):
+@dp.callback_query(F.data.startswith('ticket_'))
+async def handle_ticket_callback(query: CallbackQuery, state: FSMContext):
     user_id = query.from_user.id
-    tg_id = user_id
+    ticket_id = int(query.data.split('_')[1])
+    ticket_info = sql.get_ticket_info(ticket_id)
+    await state.set_state(UserStates.waiting_for_ticket_comment)
+    await state.update_data(ticket_id=ticket_id)
     
-
-    if query.data.startswith('ticket_'):
-        ticket_id = query.data.split('_')[1]
-        ticket_info = sql.get_ticket_info(ticket_id)
-        sql.update_pos(f'ticket_details_{ticket_info[0]}', 'tg_id', user_id)
-        await query.answer()
-        text = f"<b>Детали заявки:</b> <code>#{ticket_info[0]}\n\n</code>" \
-               f"<b>Пользователь ID:</b> <a href='tg://user?id={ticket_info[1]}'>{ticket_info[1]}</a>\n" \
-               f"<b>Организация:</b> {ticket_info[2]}\n" \
-               f"<b>Адрес:</b> {ticket_info[3]}\n\n" \
-               f"<b>Сообщение от пользователя:</b> - <em>{ticket_info[4]}</em>\n\n" \
-               f"<b>Время создания:</b> {ticket_info[5]}\n" \
-               f"<b>Статус:</b> {ticket_info[6]}\n\n" \
-               f"<em>⚠️ Для завершения задачи введите комментарий. В ответ вам придет сообщение с подтвержением!</em>"
-               
-        keyboard = types.InlineKeyboardMarkup()
-        back_button = types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_panel")
-
-        keyboard.add(back_button)
-        await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    text = (
+        f"<b>Детали заявки:</b> <code>#{ticket_info[0]}</code>\n\n"
+        f"<b>Пользователь ID:</b> <a href='tg://user?id={ticket_info[1]}'>{ticket_info[1]}</a>\n"
+        f"<b>Организация:</b> {ticket_info[2]}\n"
+        f"<b>Адрес:</b> {ticket_info[3]}\n\n"
+        f"<b>Сообщение от пользователя:</b> - <em>{ticket_info[4]}</em>\n\n"
+        f"<b>Время создания:</b> {ticket_info[5]}\n"
+        f"<b>Статус:</b> {ticket_info[6]}\n\n"
+        f"<em>⚠️ Для завершения задачи введите комментарий. В ответ вам придет сообщение с подтвержением!</em>"
+    )
     
-    
-    if query.data.startswith('my_ticket_page_'):
-        page = int(query.data.split('_')[3])  # Получаем номер страницы из колбека
-        await query.answer()                  # Ответим на колбек, чтобы убрать "крутилку"
-        tg_id = query.from_user.id
-        # Получаем текст сообщения и клавиатуру с учетом текущей страницы
-        text, keyboard = my_ticket_history(tg_id, page)
-        # Редактируем сообщение с новым текстом и клавиатурой
-        await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]
+    ])
+    await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    await query.answer()
 
+@dp.callback_query(F.data.startswith('my_ticket_page_'))
+async def handle_ticket_page_callback(query: CallbackQuery):
+    page = int(query.data.split('_')[3])
+    await query.answer()
+    text, keyboard = my_ticket_history(query.from_user.id, page)
+    await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
 
-
-# Группа колбеков на батоны
-@dp.callback_query_handler()
-async def inline_kb_answer_callback_handler(query: types.CallbackQuery):
+@dp.callback_query()
+async def inline_kb_answer_callback_handler(query: CallbackQuery, state: FSMContext):
     user_id = query.from_user.id
-    tg_id = user_id
-        
+    
     if query.data == 'admin_panel':
-        # Обновление ячейки 'pos' в базе данных
-        sql.update_pos('admin_panel', 'tg_id', user_id)
+        await state.set_state(None)
         await query.answer()
         text, keyboard = admin_panel()
         await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
 
-    if query.data == 'main_menu':
-        # Обновление ячейки 'pos' в базе данных
-        sql.update_pos('main_menu', 'tg_id', user_id)
+    elif query.data == 'main_menu':
+        await state.set_state(None)
         await query.answer()
-        text, keyboard = main_menu(tg_id)
+        text, keyboard = main_menu(user_id)
         await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
         
-    if query.data.startswith('complete_'):   
-        ticket_id = query.data.split('_')[1]
-        # Обновление ячейки 'pos' в базе данных
-        sql.update_pos('complete_', 'tg_id', user_id)
+    elif query.data.startswith('complete_'):
+        ticket_id = int(query.data.split('_')[1])
         await query.answer()
         sql.update_ticket_status(ticket_id, "Завершена")
         ticket_comm_done = sql.read_ticket_comment(ticket_id)
         ticket_info = sql.get_ticket_info(ticket_id)
-            
-        current_time = datetime.datetime.now()
-        time_ticket = datetime.datetime.strptime(ticket_info[5], "%Y-%m-%d %H:%M:%S")
+        
+        current_time = sql.parse_to_moscow_naive(None)
+        time_ticket = sql.parse_to_moscow_naive(ticket_info[5])  
         time_difference = current_time - time_ticket
-        
-        # Преобразуем общее количество секунд в объект timedelta
-        total_seconds = time_difference.total_seconds()
-        hours = int(total_seconds // 3600) 
+        hours = int(time_difference.total_seconds() // 3600)
 
-        # Отправка сообщения пользователю о завершении задачи
-        user_id = ticket_info[1]  # ID пользователя, поставившего задачу
-        completion_message = f"🎉 Задача <code>#{ticket_id}</code> выполнена!\n<b>Время выполнения:</b> {hours} часа(ов).\n\n<b>Ответ исполнителя:</b> - <em>{ticket_comm_done}</em>\n\n<em>⚠️ Пожалуйста, проверьте корректность исполнения задачи.</em>"
+        user_id = ticket_info[1]
+        completion_message = (
+            f"🎉 Задача <code>#{ticket_id}</code> выполнена!\n"
+            f"<b>Время выполнения:</b> {hours} часа(ов).\n\n"
+            f"<b>Ответ исполнителя:</b> - <em>{ticket_comm_done}</em>\n\n"
+            f"<em>⚠️ Пожалуйста, проверьте корректность исполнения задачи.</em>"
+        )
         
-        back_button_user = types.InlineKeyboardButton("🧑‍💻 Главное меню", callback_data="main_menu")
-        history_ticket = InlineKeyboardButton(text="☑️ История заявок", callback_data="my_ticket_history")
-        keyboard_markup_user = types.InlineKeyboardMarkup().add(history_ticket, back_button_user)
+        keyboard_markup_user = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="☑️ История заявок", callback_data="my_ticket_history"),
+            InlineKeyboardButton(text="🧑‍💻 Главное меню", callback_data="main_menu")]
+        ])
         
-        back_button_admin = types.InlineKeyboardButton("🤘Тикет меню", callback_data="admin_panel")
-        keyboard_markup_admin = types.InlineKeyboardMarkup().add(back_button_admin)
+        keyboard_markup_admin = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🤘 Тикет меню", callback_data="admin_panel")]
+        ])
         
         await bot.send_message(user_id, completion_message, reply_markup=keyboard_markup_user, parse_mode="HTML")
-        await bot.send_message(query.from_user.id, completion_message, reply_markup=keyboard_markup_admin, parse_mode="HTML")  
+        await bot.send_message(query.from_user.id, completion_message, reply_markup=keyboard_markup_admin, parse_mode="HTML")
+        await state.set_state(None)
         
-    
-    if query.data == 'my_company':
-        # Обновление ячейки 'pos' в базе данных
-        sql.update_pos('my_company', 'tg_id', user_id)
+    elif query.data == 'my_company':
+        await state.set_state(None)
         await query.answer()
-        text, keyboard = my_company(tg_id)
+        text, keyboard = my_company(user_id)
         await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
        
-    if query.data == 'edit_company_name':
-        # Обновление ячейки 'pos' в базе данных
-        sql.update_pos('edit_company_name', 'tg_id', user_id)
+    elif query.data == 'edit_company_name':
+        await state.set_state(UserStates.waiting_for_company_name)
         await query.answer()
-        text, keyboard = edit_company_name(tg_id)
+        text, keyboard = edit_company_name(user_id)
         await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
         
-    if query.data == 'edit_company_adress':
-        # Обновление ячейки 'pos' в базе данных
-        sql.update_pos('edit_company_adress', 'tg_id', user_id)
+    elif query.data == 'edit_company_adress':
+        await state.set_state(UserStates.waiting_for_company_address)
         await query.answer()
-        text, keyboard = edit_company_adress(tg_id)
-        await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")     
+        text, keyboard = edit_company_address(user_id)
+        await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        
+    elif query.data == 'edit_company_inn':
+        await state.set_state(UserStates.waiting_for_company_inn)
+        await query.answer()
+        text, keyboard = edit_company_inn(user_id)
+        await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        
+    elif query.data == 'edit_company_phone':
+        await state.set_state(UserStates.waiting_for_company_phone)
+        await query.answer()
+        text, keyboard = edit_company_phone(user_id)
+        await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        
+    elif query.data == 'new_ticket':
+        await state.set_state(UserStates.waiting_for_ticket_message)
+        await query.answer()
+        text, keyboard = new_ticket(user_id)
+        await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        
+    elif query.data == 'my_ticket':
+        await state.set_state(None)
+        await query.answer()
+        text, keyboard = my_ticket(user_id)
+        await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        
+    elif query.data == 'my_ticket_history':
+        await state.set_state(None)
+        await query.answer()
+        text, keyboard = my_ticket_history(user_id)
+        await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
 
-    if query.data == 'edit_company_inn':
-        # Обновление ячейки 'pos' в базе данных
-        sql.update_pos('edit_company_inn', 'tg_id', user_id)
-        await query.answer()
-        text, keyboard = edit_company_inn(tg_id)
-        await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
- 
-    if query.data == 'edit_company_phone':
-        # Обновление ячейки 'pos' в базе данных
-        sql.update_pos('edit_company_phone', 'tg_id', user_id)
-        await query.answer()
-        text, keyboard = edit_company_phone(tg_id)
-        await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-             
-    if query.data == 'new_ticket':
-        # Обновление ячейки 'pos' в базе данных
-        sql.update_pos('new_ticket', 'tg_id', user_id)
-        await query.answer()
-        text, keyboard = new_ticket(tg_id)
-        await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-        
-    if query.data == 'my_ticket':
-        # Обновление ячейки 'pos' в базе данных
-        sql.update_pos('my_ticket', 'tg_id', user_id)
-        await query.answer()
-        text, keyboard = my_ticket(tg_id)
-        await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")      
+@dp.message(UserStates.waiting_for_company_name)
+async def handle_company_name(message: Message, state: FSMContext):
+    sql.update_user_field(message.from_user.id, 'organization', message.text)
+    text, keyboard = my_company(message.from_user.id)
+    await message.reply(text, reply_markup=keyboard, parse_mode="HTML")
+    await state.set_state(None)
 
-    if query.data == 'my_ticket_history':
-        # Обновление ячейки 'pos' в базе данных
-        sql.update_pos('my_ticket_history', 'tg_id', user_id)
-        await query.answer()
-        text, keyboard = my_ticket_history(tg_id)
-        await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")   
-        
-        
-        
-        
-# Обратотка текстовых сообщений
-@dp.message_handler()
-async def handle_text_input(message: types.Message):
-    
+@dp.message(UserStates.waiting_for_company_address)
+async def handle_company_address(message: Message, state: FSMContext):
+    sql.update_user_field(message.from_user.id, 'organization_adress', message.text)
+    text, keyboard = my_company(message.from_user.id)
+    await message.reply(text, reply_markup=keyboard, parse_mode="HTML")
+    await state.set_state(None)
+
+@dp.message(UserStates.waiting_for_company_inn)
+async def handle_company_inn(message: Message, state: FSMContext):
+    sql.update_user_field(message.from_user.id, 'organization_inn', message.text)
+    text, keyboard = my_company(message.from_user.id)
+    await message.reply(text, reply_markup=keyboard, parse_mode="HTML")
+    await state.set_state(None)
+
+@dp.message(UserStates.waiting_for_company_phone)
+async def handle_company_phone(message: Message, state: FSMContext):
+    sql.update_user_field(message.from_user.id, 'organization_phone', message.text)
+    text, keyboard = my_company(message.from_user.id)
+    await message.reply(text, reply_markup=keyboard, parse_mode="HTML")
+    await state.set_state(None)
+
+@dp.message(UserStates.waiting_for_ticket_message)
+async def handle_ticket_message(message: Message, state: FSMContext):
     user_id = message.from_user.id
     username = message.from_user.username
-    profile = sql.read_profile(user_id)  
-    organization_name = profile.get("organization", "")
-    organization_address = profile.get("organization_adress", "") 
-    organization_phone = profile.get("organization_phone", "Нет данных")
-    user_position = sql.read_cell('pos', 'tg_id', user_id)
+    user = sql.get_user_by_id(user_id)
+    organization = user.get("organization", "Нет данных")
+    addres_ticket = user.get("organization_adress", "Нет данных")
+    organization_phone = user.get("organization_phone", "Нет данных")
+    message_ticket = message.text
+    time_ticket_dt = sql.parse_to_moscow_naive(message.date)
+    time_ticket = time_ticket_dt.strftime("%Y-%m-%d %H:%M:%S")
+    state_ticket = "В работе"
+    ticket_comm = ""
 
-    if user_position.startswith('ticket_details_'):
-        parts = user_position.split('_')
-        if len(parts) == 3 and parts[2].isdigit():
-            ticket_id = int(parts[2])
-            # Обновление комментария в базе данных
-            comment_text = message.text
-            sql.update_ticket_comment(ticket_id, comment_text)
-            
-            # Создаем кнопку "✅ Выполнить"
-            complete_button = types.InlineKeyboardButton("✅ Завершить задачу", callback_data=f"complete_{ticket_id}")
-            keyboard = types.InlineKeyboardMarkup()
-            keyboard.add(complete_button)
-            
-            # Вставляем переменные в текст сообщения
-            success_message = f"<b>Комментарий к тикету <code>#{ticket_id}</code> успешно записан!</b>\n\n<b>Ответ исполнителя:</b> - <em>{comment_text}</em>\n\n<em>⚠️ Если вы допустили ошибку, просто отправьте исправленное сообщение еще раз.</em>"
-            await message.reply(success_message, reply_markup=keyboard, parse_mode="HTML")
-        else:
-            await message.reply("Ошибка формата номера тикета", parse_mode="HTML")
-                
-    if user_position == 'edit_company_name':
-        sql.update_profile_data(user_id, 'organization', message.text)
-        text, keyboard = my_company(user_id)
-        await message.reply(text, reply_markup=keyboard, parse_mode="HTML")
+    sql.add_ticket(user_id, organization, addres_ticket, message_ticket, time_ticket, state_ticket, ticket_comm)
+    last_ticket_number = sql.get_last_ticket_number()
 
-
-    if user_position == 'edit_company_adress':
-        sql.update_profile_data(user_id, 'organization_adress', message.text)
-        text, keyboard = my_company(user_id)
-        await message.reply(text, reply_markup=keyboard, parse_mode="HTML")
-
-    if user_position == 'edit_company_inn':
-        sql.update_profile_data(user_id, 'organization_inn', message.text)
-        text, keyboard = my_company(user_id)
+    if last_ticket_number:
+        sql.update_user_field(user_id, 'history_ticket', str(last_ticket_number))
+        sql.update_user_field(user_id, 'data_ticket', time_ticket)
+        sql.update_user_field(user_id, 'user_name', username)
+        
+        text, keyboard = done_ticket(user_id)
         await message.reply(text, reply_markup=keyboard, parse_mode="HTML")
         
-    if user_position == 'edit_company_phone':
-        sql.update_profile_data(user_id, 'organization_phone', message.text)
-        text, keyboard = my_company(user_id)
-        await message.reply(text, reply_markup=keyboard, parse_mode="HTML")
+        admin_text = (
+            f"📬❗️\nПользователь @{username} создал новую заявку с номером <code>#{last_ticket_number}</code>.\n\n"
+            f"<b>Сообщение от пользователя:</b>\n - <em>{message_ticket}</em>\n\n"
+            f"<b>Телефон:</b> {organization_phone}\n"
+            f"<b>Компания:</b> {organization}\n"
+            f"<b>Адрес:</b> {addres_ticket}\n"
+        )
+        keyboard_markup = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🤘 Тикет меню 🫰", callback_data="admin_panel")]
+        ])
+        await bot.send_message(config.ADMIN_MESSAGE, admin_text, parse_mode="HTML", reply_markup=keyboard_markup)
+    else:
+        await message.reply("Ошибка при получении заявки.")
+    await state.set_state(None)
+
+@dp.message(UserStates.waiting_for_ticket_comment)
+async def handle_ticket_comment(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    data = await state.get_data()
+    ticket_id = data.get('ticket_id')
+    
+    if ticket_id:
+        comment_text = message.text
+        sql.update_ticket_comment(ticket_id, comment_text)
         
-    if user_position == 'new_ticket':
-        user_ticket = user_id
-        organization = organization_name
-        addres_ticket = organization_address
-        message_ticket = message.text
-        time_ticket = message.date
-        state_ticket = "В работе"
-        ticket_comm = ""
+        success_message = (
+            f"<b>Комментарий к тикету <code>#{ticket_id}</code> успешно записан!</b>\n\n"
+            f"<b>Ответ исполнителя:</b> - <em>{comment_text}</em>\n\n"
+            f"<em>⚠️ Если вы допустили ошибку, просто отправьте исправленное сообщение еще раз.</em>"
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Завершить задачу", callback_data=f"complete_{ticket_id}")]
+        ])
+        await message.reply(success_message, reply_markup=keyboard, parse_mode="HTML")
+    else:
+        await message.reply("Ошибка: не указан номер тикета.", parse_mode="HTML")
+    # Состояние не сбрасываем, чтобы пользователь мог отправить новый комментарий
 
-        # Добавляем новую заявку в базу данных
-        sql.add_ticket(user_ticket, organization, addres_ticket, message_ticket, time_ticket, state_ticket, ticket_comm)
-        # Получаем номер последней добавленной заявки
-        last_ticket_number = sql.get_last_ticket_number()
-
-        if last_ticket_number:
-            # Обновляем профиль пользователя с номером последней добавленной заявки
-            sql.update_profile_data(user_id, 'history_ticket', str(last_ticket_number))
-            sql.update_profile_data(user_id, 'data_ticket', str(time_ticket))
-            sql.update_profile_data(user_id, 'user_name', str(username))
-            
-
-            # Меню благодарочки
-            text, keyboard = done_ticket(user_id)
-            await message.reply(text, reply_markup=keyboard, parse_mode="HTML")
-            
-            admin_panel = types.InlineKeyboardButton("🤘Тикет меню🫰", callback_data="admin_panel")
-            keyboard_markup = types.InlineKeyboardMarkup().add(admin_panel)
-            
-            # Отправка сообщения администратору
-            admin_text = (f"📬❗️\nПользователь @{username} создал новую заявку с номером <code>#{last_ticket_number}</code>."
-                        f"\n\n<b>Сообщение от пользователя:</b>\n - <em>{message_ticket}</em>"
-                        f"\n\n<b>Телефон:</b> {organization_phone}\n"
-                        f"<b>Компания:</b> {organization}\n"
-                        f"<b>Адрес:</b> {addres_ticket}\n"
-            )
-            
-            # Добавляем клавиатуру к уведомлению
-            await bot.send_message(ADMIN_MESSAGE, admin_text, parse_mode="HTML", reply_markup=keyboard_markup)
-        else:
-            await message.reply("Ошибка при получении заявки.")
-            
+async def main():
+    await dp.start_polling(bot)
 
 if __name__ == '__main__':
-    executor = aiogram.executor.Executor(dp, loop=loop, skip_updates=True)
-    executor.start_polling()
+    asyncio.run(main())
